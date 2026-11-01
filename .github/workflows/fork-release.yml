@@ -1,4 +1,4 @@
-name: Patch upstream release and publish
+name: Open upstream release upgrade PR
 
 on:
   schedule:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       upstream_tag:
-        description: "Stable upstream release, e.g. v1.855.1; empty selects latest"
+        description: "Stable upstream release, e.g. v1.856.0; empty selects latest"
         type: string
         default: ""
 
@@ -18,68 +18,38 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
-    runs-on: ubuntu-24.04
-    outputs:
-      upstream_tag: ${{ steps.release.outputs.upstream_tag }}
-      release_tag: ${{ steps.release.outputs.release_tag }}
-      skip: ${{ steps.release.outputs.skip }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Find upstream release and skip completed builds
-        id: release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          UPSTREAM_TAG: ${{ inputs.upstream_tag }}
-        run: python .github/scripts/fork_build.py release --tag "$UPSTREAM_TAG"
-
-  image:
-    needs: release
-    if: needs.release.outputs.skip != 'true'
-    permissions:
-      contents: read
-      packages: write
-    uses: ./.github/workflows/fork-image.yml
-    with:
-      upstream_tag: ${{ needs.release.outputs.upstream_tag }}
-      publish: true
-      architectures: '["amd64","arm64"]'
-
-  record:
-    needs: [release, image]
+  upgrade:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      pull-requests: write
+      actions: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
         with:
-          name: fork-build-metadata
-          path: metadata
-      - name: Record image digest and publish the patch bundle
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Configure GitHub git authentication
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh auth setup-git
+      - name: Rebase main changes onto the release and open an upgrade PR
+        id: upgrade
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPSTREAM_RELEASE_TOKEN: ${{ secrets.UPSTREAM_RELEASE_TOKEN }}
+          UPSTREAM_TAG: ${{ inputs.upstream_tag }}
+        run: python .github/scripts/fork_build.py upgrade --tag "$UPSTREAM_TAG" --source "$RUNNER_TEMP/upgrade"
+      - name: Run tests explicitly for the bot-created PR
+        if: steps.upgrade.outputs.test_branch != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          FORK_SHA: ${{ github.sha }}
-          RELEASE_TAG: ${{ needs.release.outputs.release_tag }}
-          UPSTREAM_TAG: ${{ needs.release.outputs.upstream_tag }}
-          IMAGE: ${{ needs.image.outputs.image }}:${{ needs.image.outputs.tag }}
-          DIGEST: ${{ needs.image.outputs.digest }}
-        run: |
-          jq --arg image "$IMAGE" --arg digest "$DIGEST" \
-            '. + {published_image: $image, digest: $digest}' \
-            metadata/metadata.json > metadata/build.json
-          {
-            echo "Upstream release: $UPSTREAM_TAG"
-            echo
-            echo "Image: $IMAGE@$DIGEST"
-            echo
-            echo "The attached patch was applied to upstream source before building."
-            echo "The release tag identifies the fork build recipe, not an upstream source commit."
-            echo "Public source only; private CE implementations are unavailable."
-            echo "Publishing this image does not deploy it to Kubernetes."
-          } > metadata/notes.md
-          gh release create "$RELEASE_TAG" metadata/fork.patch metadata/build.json \
-            --target "$FORK_SHA" --title "Windmill $UPSTREAM_TAG with Yeap patches" \
-            --notes-file metadata/notes.md --latest=false
+          BRANCH: ${{ steps.upgrade.outputs.test_branch }}
+        run: gh workflow run fork-ci.yml --ref "$BRANCH"
+      - name: Report upgrade PR
+        env:
+          PR_URL: ${{ steps.upgrade.outputs.pr_url }}
+          REASON: ${{ steps.upgrade.outputs.reason }}
+        run: echo "${PR_URL:-$REASON}" >> "$GITHUB_STEP_SUMMARY"

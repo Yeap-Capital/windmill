@@ -9,12 +9,18 @@ from pathlib import Path
 import re
 import subprocess
 import tomllib
-import urllib.error
 import urllib.request
+import urllib.parse
 
 
 ROOT = Path(__file__).resolve().parents[2]
 UPSTREAM = "windmill-labs/windmill"
+BASE_FILE = ".github/fork-upstream-base.json"
+# Keep build orchestration and version-specific tests out of the runtime source patch.
+PATCH_PATHS = [
+    ".", ":(exclude).github", ":(exclude)docs/fork-ci.md", ":(exclude)fork",
+    ":(exclude)backend/tests", ":(exclude,glob)**/*.test.*",
+]
 
 
 def git(*args, cwd=None):
@@ -27,24 +33,34 @@ def stable_tag(value):
     return value
 
 
-def patches(root):
-    result = sorted((root / "fork/patches").glob("*.patch"))
-    if not result:
-        raise ValueError("No fork patches found")
-    return result
+def upstream_base(root):
+    base = json.loads((root / BASE_FILE).read_text())
+    if not re.fullmatch(r"[a-f0-9]{40}", base["sha"]):
+        raise ValueError("Invalid upstream base SHA")
+    if base["tag"] is not None:
+        stable_tag(base["tag"])
+    return base
+
+
+def fetch_base(root):
+    base = upstream_base(root)["sha"]
+    exists = subprocess.run(["git", "cat-file", "-e", f"{base}^{{commit}}"],
+                            cwd=root, capture_output=True).returncode == 0
+    if not exists:
+        git("fetch", "--no-tags", f"https://github.com/{UPSTREAM}.git", base, cwd=root)
+
+
+def generate_patch(root, base=None, production=True):
+    base = base or upstream_base(root)["sha"]
+    patch = subprocess.check_output(
+        ["git", "diff", "--binary", "--no-renames", base, "HEAD", "--",
+         *(PATCH_PATHS if production else ["."])], cwd=root,
+    )
+    return base, patch
 
 
 def build_revision(root):
-    files = patches(root) + [
-        root / ".github/scripts/fork_build.py",
-        root / ".github/scripts/smoke_image.py",
-        root / ".github/workflows/fork-image.yml",
-    ]
-    digest = hashlib.sha256()
-    for path in files:
-        digest.update(str(path.relative_to(root)).encode() + b"\0")
-        digest.update(path.read_bytes() + b"\0")
-    return digest.hexdigest()[:12]
+    return git("rev-parse", "HEAD", cwd=root)[:12]
 
 
 def public_features(source):
@@ -81,20 +97,22 @@ def public_features(source):
     return ",".join(selected), sorted(omitted)
 
 
-def apply_patches(source, root):
-    for patch in patches(root):
-        git("apply", "--check", str(patch), cwd=source)
-        git("apply", str(patch), cwd=source)
+def apply_patch(source, patch):
+    if patch:
+        subprocess.run(["git", "apply", "--check"], input=patch, cwd=source, check=True)
+        subprocess.run(["git", "apply"], input=patch, cwd=source, check=True)
 
 
-def api(path):
+def api(path, data=None):
     request = urllib.request.Request(
         f"https://api.github.com/{path}",
         headers={
             "Accept": "application/vnd.github+json",
+            "Content-Type": "application/json",
             "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
             "X-GitHub-Api-Version": "2022-11-28",
         },
+        data=json.dumps(data).encode() if data is not None else None,
     )
     with urllib.request.urlopen(request, timeout=30) as response:
         return json.load(response)
@@ -108,31 +126,92 @@ def outputs(values):
             output.write(f"{key}={value}\n")
 
 
-def select_release(tag):
+def rebase_main(root, source, tag, target):
+    """Replay the main tree delta once, preserving main and release ancestry in the PR."""
+    base, patch = generate_patch(root, production=False)
+    main_sha = git("rev-parse", "HEAD", cwd=root)
+    git("worktree", "add", "--detach", str(source), base, cwd=root)
+    git("config", "user.name", "github-actions[bot]", cwd=source)
+    git("config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com", cwd=source)
+    apply_patch(source, patch)
+    git("add", "--all", cwd=source)
+    git("commit", "--allow-empty", "-m", f"Apply fork main changes from {main_sha}", cwd=source)
+    git("rebase", "--onto", target, base, cwd=source)
+    (source / BASE_FILE).parent.mkdir(parents=True, exist_ok=True)
+    (source / BASE_FILE).write_text(json.dumps({"sha": target, "tag": tag}, indent=2) + "\n")
+    git("add", BASE_FILE, cwd=source)
+    git("commit", "--amend", "--no-edit", cwd=source)
+    tree = git("rev-parse", "HEAD^{tree}", cwd=source)
+    # Keep the PR diff against main accurate and support future upgrades after squash merges.
+    return git("commit-tree", tree, "-p", main_sha, "-p", target,
+               "-m", f"Update Windmill to {tag}", cwd=source)
+
+
+def upgrade(tag, source):
+    if (os.environ.get("GITHUB_REF") != "refs/heads/main"
+            or git("rev-parse", "HEAD", cwd=ROOT) != os.environ.get("GITHUB_SHA")):
+        raise ValueError("Upgrade PRs must run from a checked-out main workflow snapshot")
+    repository = os.environ["GITHUB_REPOSITORY"]
+    remote_main = api(f"repos/{repository}/git/ref/heads/main")["object"]["sha"]
+    if remote_main != os.environ["GITHUB_SHA"]:
+        outputs({"created": "false", "reason": "Main advanced; the next run will use its new snapshot"})
+        return
     endpoint = f"releases/tags/{stable_tag(tag)}" if tag else "releases/latest"
     release = api(f"repos/{UPSTREAM}/{endpoint}")
     if release["draft"] or release["prerelease"]:
         raise ValueError("Only published stable upstream releases are supported")
     tag = stable_tag(release["tag_name"])
-    release_tag = f"fork-{tag}-p{build_revision(ROOT)}"
-    skip = "false"
-    try:
-        api(f"repos/{os.environ['GITHUB_REPOSITORY']}/releases/tags/{release_tag}")
-        skip = "true"
-    except urllib.error.HTTPError as error:
-        if error.code != 404:
-            raise
-    outputs({"upstream_tag": tag, "release_tag": release_tag, "skip": skip})
+    prefix = f"automation/windmill-{tag}-"
+    branch = f"{prefix}{build_revision(ROOT)}"
+    for pull in api(f"repos/{repository}/pulls?state=all&per_page=100"):
+        if pull["head"]["repo"] is None or pull["head"]["repo"]["full_name"].lower() != repository.lower():
+            continue
+        if pull["state"] == "open" and pull["head"]["ref"].startswith(prefix):
+            query = urllib.parse.urlencode({"branch": pull["head"]["ref"], "head_sha": pull["head"]["sha"], "per_page": 1})
+            runs = api(f"repos/{repository}/actions/workflows/fork-ci.yml/runs?{query}")
+            outputs({"created": "false", "pr_url": pull["html_url"],
+                     "test_branch": "" if runs["workflow_runs"] else pull["head"]["ref"]})
+            return
+        if pull["state"] == "closed" and pull["head"]["ref"] == branch:
+            outputs({"created": "false", "pr_url": pull["html_url"]})
+            return
+    fetch_base(ROOT)
+    git("fetch", "--no-tags", f"https://github.com/{UPSTREAM}.git",
+        f"refs/tags/{tag}:refs/tags/{tag}", cwd=ROOT)
+    target = git("rev-parse", f"refs/tags/{tag}^{{commit}}", cwd=ROOT)
+    if subprocess.run(["git", "merge-base", "--is-ancestor", target,
+                       upstream_base(ROOT)["sha"]], cwd=ROOT).returncode == 0:
+        outputs({"created": "false", "reason": "Release already included in main's upstream base"})
+        return
+    if not git("ls-remote", "--heads", "origin", f"refs/heads/{branch}", cwd=ROOT):
+        commit = rebase_main(ROOT, source, tag, target)
+        git("update-ref", f"refs/heads/{branch}", commit, cwd=ROOT)
+        # A dedicated token can grant workflow-file writes needed by upstream upgrades.
+        push_env = {**os.environ, "GH_TOKEN": os.environ.get("UPSTREAM_RELEASE_TOKEN") or os.environ["GH_TOKEN"]}
+        subprocess.run(["git", "push", "origin", f"refs/heads/{branch}"],
+                       cwd=ROOT, env=push_env, check=True)
+    pull = api(f"repos/{repository}/pulls", {
+        "title": f"chore: update Windmill to {tag}",
+        "head": branch,
+        "base": "main",
+        "body": (
+            f"Rebase the fork changes from main `{git('rev-parse', 'HEAD', cwd=ROOT)}` "
+            f"onto official Windmill `{tag}` (`{target}`).\n\n"
+            "Production changes, fork workflows and tests come from main. "
+            "The upstream base record is updated in this PR. "
+            "Public fork CI is dispatched explicitly so bot-created PRs run tests. "
+            "PR builds do not publish images. After merge, main CI tests and publishes "
+            "the versioned image. This PR does not deploy to Kubernetes."
+        ),
+    })
+    outputs({"created": "true", "test_branch": branch, "pr_url": pull["html_url"]})
 
 
-def prepare(source, tag):
-    if tag:
-        stable_tag(tag)
-        git("clone", "--depth", "1", "--branch", tag,
-            f"https://github.com/{UPSTREAM}.git", str(source))
-        apply_patches(source, ROOT)
-    else:
-        source = ROOT
+def prepare():
+    fetch_base(ROOT)
+    base, patch = generate_patch(ROOT)
+    source = ROOT
+    tag = upstream_base(ROOT)["tag"]
     features, omitted = public_features(source)
     revision = build_revision(ROOT)
     source_sha = git("rev-parse", "HEAD", cwd=source)
@@ -141,6 +220,8 @@ def prepare(source, tag):
         "upstream_tag": tag or None,
         "source_sha": source_sha,
         "fork_sha": os.environ["GITHUB_SHA"],
+        "fork_base_sha": base,
+        "patch_sha256": hashlib.sha256(patch).hexdigest(),
         "build_revision": revision,
         "features": features,
         "omitted_features": omitted,
@@ -150,20 +231,22 @@ def prepare(source, tag):
     destination = Path(os.environ["RUNNER_TEMP"]) / "fork-build"
     destination.mkdir(exist_ok=True)
     (destination / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
-    (destination / "fork.patch").write_bytes(b"".join(p.read_bytes() for p in patches(ROOT)))
+    (destination / "fork.patch").write_bytes(patch)
     outputs({**{k: v for k, v in metadata.items() if isinstance(v, str)}, "source": source})
     print(json.dumps(metadata, indent=2))
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["prepare", "release", "features"])
+    parser.add_argument("command", choices=["prepare", "upgrade", "features", "fetch-base"])
     parser.add_argument("--tag", default="")
     parser.add_argument("--source", type=Path, default=ROOT)
     args = parser.parse_args()
-    if args.command == "release":
-        select_release(args.tag)
+    if args.command == "upgrade":
+        upgrade(args.tag, args.source)
     elif args.command == "features":
         print(public_features(args.source)[0])
+    elif args.command == "fetch-base":
+        fetch_base(ROOT)
     else:
-        prepare(args.source, args.tag)
+        prepare()

@@ -3,9 +3,6 @@ name: Public fork image
 on:
   workflow_call:
     inputs:
-      upstream_tag:
-        type: string
-        default: ""
       publish:
         type: boolean
         default: false
@@ -32,15 +29,16 @@ jobs:
       features: ${{ steps.source.outputs.features }}
       source_sha: ${{ steps.source.outputs.source_sha }}
       build_revision: ${{ steps.source.outputs.build_revision }}
+      fork_base_sha: ${{ steps.source.outputs.fork_base_sha }}
+      patch_sha256: ${{ steps.source.outputs.patch_sha256 }}
     steps:
       - uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           persist-credentials: false
       - name: Prepare source and audit public CE features
         id: source
-        env:
-          UPSTREAM_TAG: ${{ inputs.upstream_tag }}
-        run: python .github/scripts/fork_build.py prepare --tag "$UPSTREAM_TAG" --source "$RUNNER_TEMP/upstream"
+        run: python .github/scripts/fork_build.py prepare
       - name: Archive exact build context
         env:
           SOURCE: ${{ steps.source.outputs.source }}
@@ -101,6 +99,8 @@ jobs:
             org.opencontainers.image.revision=${{ needs.prepare.outputs.source_sha }}
             io.yeap.windmill.fork-revision=${{ github.sha }}
             io.yeap.windmill.build-revision=${{ needs.prepare.outputs.build_revision }}
+            io.yeap.windmill.upstream-revision=${{ needs.prepare.outputs.fork_base_sha }}
+            io.yeap.windmill.patch-sha256=${{ needs.prepare.outputs.patch_sha256 }}
           cache-from: type=gha,scope=public-ce-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=public-ce-${{ matrix.arch }}
       - name: Start disposable database and patched server

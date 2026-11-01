@@ -1,127 +1,134 @@
-# Public builds and patched upstream releases
+# Public builds and upstream release upgrade PRs
 
-Upstream workflow files and Dockerfiles remain unchanged. The fork adds three entry
-points with a shared image builder:
+Maintain our source changes on `main`. There are no checked-in patch files to maintain.
+Upstream workflow files and Dockerfiles remain unchanged.
+
+```text
+Official stable release
+    -> create an upgrade branch from the fork's main changes, rebased onto that release
+    -> open a PR into main
+    -> run frontend, backend, recipe and image checks on the PR
+    -> review and merge the PR
+    -> main CI checks and publishes the versioned Docker image
+```
+
+The release detector never publishes images or merges its PR. These workflows do not
+deploy to Kubernetes or change Flux, Helm or the live PostgreSQL database.
 
 | Workflow | Purpose |
 | --- | --- |
-| `fork-ci.yml` | PR/main frontend checks, public backend API tests, patch/feature checks, then image build. PRs upload an amd64 image archive. Main builds publish a SHA tag. |
-| `fork-image.yml` | Reusable source preparation, public CE feature selection, unchanged upstream Dockerfile, real image smoke checks and optional GHCR publication. |
-| `fork-release.yml` | Every six hours, check the latest stable upstream release, apply our patches to that release and publish tested amd64/arm64 images. Manual dispatch accepts a stable release tag. |
+| `fork-ci.yml` | PR/main frontend checks, public backend API regressions, source/rebase tests and image build. PRs upload an amd64 image artifact; main publishes to GHCR. |
+| `fork-image.yml` | Shared public CE feature selection, unchanged upstream Dockerfile, image smoke checks and optional publication. |
+| `fork-release.yml` | Every six hours, inspect the latest stable upstream release and open an upgrade PR. Manual dispatch accepts a stable release tag and runs only from main. |
 
-Schedules and manual dispatch become available after these workflows reach the default
-branch. Actions must be enabled in the fork. GHCR publication uses `GITHUB_TOKEN` with
-`packages: write`; GitHub Release records use `contents: write`. Organization policy or
-an existing package's access settings can still prevent publication. A newly created
-GHCR package may be private; make it public or configure Kubernetes pull credentials.
+## Main is the source of our changes
 
-These workflows publish images, not deployments. They do not change Flux, Helm, the
-cluster, an upstream tracking branch or the live PostgreSQL database.
+`.github/fork-upstream-base.json` records the upstream commit that the current main
+tree is based on. It contains only an upstream SHA and optional release tag, not our
+code or a saved patch. The initial base is `5f68eb9f4479bf209a34a34c857dd1d7e8de0eb9`,
+an upstream main snapshot. The first upgrade may align that snapshot with an official
+release of the same application version. The detector skips a release already included
+in the recorded base.
 
-## Official recipe and public feature selection
+The helper checks both the workflow's main ref and its exact checkout SHA against the
+repository's current main. A stale run skips and lets the next run use the new main.
+On a new release, the detector snapshots main and derives its complete diff against
+that base. In an isolated worktree it replays that diff as one temporary commit and
+runs `git rebase --onto <release> <base>`. This carries our production changes, added
+workflows, documentation and tests from main onto the new official source.
+
+After rebase, the upgrade branch updates the upstream-base record. Its final commit
+preserves main and release ancestry so the PR shows the version-update diff against
+main. Main itself is never force-pushed or rewritten. The base record also makes a
+subsequent upgrade work after squash-merging the PR.
+
+A rebase conflict stops before pushing a branch or creating a PR. Fix the conflicting
+main change or handle the upgrade manually, then rerun. There is no forced application,
+automatic conflict resolution or fallback to an unmodified upstream build.
+
+One open PR per release is reused. Its branch is named
+`automation/windmill-v<version>-<main-sha>`. Closed PRs for the same main snapshot are
+not reopened. An existing pushed branch can be reused if PR creation previously failed.
+The scheduled check selects the latest stable release, not every historical or
+intermediate release; dispatch a particular stable tag when needed.
+
+## PR tests before publication
+
+Bot-created PRs use `GITHUB_TOKEN`. GitHub does not automatically trigger ordinary
+`pull_request` workflows for those PRs, so the detector explicitly dispatches
+`fork-ci.yml` on the upgrade branch. Its checks appear on the PR's head commit.
+If dispatch fails, the next detector run retries it when the PR has no CI run.
+
+PR/main checks run the frontend regression suites and public backend API regressions.
+Python tests exercise real Git diff/application/rebase, preservation of both main's
+changes and new upstream code, patch conflicts, subsequent upgrades after a squash
+merge, feature filtering and release-tag validation.
+
+Every image starts against a disposable PostgreSQL 16 database. Smoke checks verify
+the embedded frontend, password login, rejection of unauthenticated workspace creation,
+creating four workspaces, archiving two and restoring one above the old cap.
+
+PR builds upload an image archive and do not push to a registry. Only successful main
+checks can publish. There is no auto-merge. Configure branch protection to require
+these checks if merging a failing PR must be prohibited by GitHub itself.
+
+## Official recipe and public features
 
 The official `.github/workflows/docker-image.yml` checks out public source plus
 `windmill-ee-private`, substitutes private implementations, then builds the root
-Dockerfile with `features=ce`. It uses Ubicloud and Depot, publishes multiarchitecture
-images and also has release/variant jobs. Its CE recipe requires private source too.
-It does not expose `workflow_call`, so it cannot be directly called as a reusable workflow.
+Dockerfile with `features=ce`. It uses Ubicloud and Depot and also publishes variants.
+It does not expose `workflow_call`. Its CE recipe requires private source too.
 
-Our image builder uses the root Dockerfile from the source being built. On an upstream
-release build this is that release's Dockerfile, not the Dockerfile from fork main.
-GitHub-hosted runners and Docker Buildx replace Ubicloud and Depot.
-
-`fork_build.py` reads that source's Cargo feature graph, expands `ce` only where needed,
-and removes `private`, `no_auth` and enterprise feature groups. It refuses upstream
-default features that enable these flags. For the current source this selects:
+Our shared builder uses the root Dockerfile in the source being tested. After an
+upgrade PR, that is the new release's Dockerfile. GitHub-hosted runners and Docker
+Buildx replace Ubicloud and Depot. `fork_build.py` derives the public CE feature graph,
+excluding `private`, `no_auth` and enterprise groups. Current selection:
 
 ```text
 oss_core,operator,all_languages,jemalloc,dind,agent_worker_server
 ```
 
-This retains the public language feature group rather than the previous Python-only
-build. It is not the `oss` preset, which enables `no_auth`. Compilation of a feature
-does not supply absent private implementations: the public Operator returns an
-unavailable error and agent-worker routes are stubs. Keep the existing official
-Operator image. A public build is not functionally identical to the official CE image.
+Public feature selection does not supply private implementations. The public Operator
+returns an unavailable error and agent-worker routes are stubs. Keep the existing
+official Operator image. The `oss` preset is deliberately avoided because it enables
+`no_auth`. Enabling language features does not install every runtime from the optional
+`docker/DockerfileFull`; this workflow builds the default upstream image variant.
 
-The upstream root image is the default variant. The optional full variant adds language
-tools through `docker/DockerfileFull`; enabling Rust language features alone does not
-install every tool from that full variant. This workflow does not build the full variant.
+## Published images and provenance
 
-## Patch maintenance
+Images use the lowercase fork repository, currently `ghcr.io/yeap-capital/windmill`:
 
-`fork/patches/*.patch` is the ordered production patch series. The current patch deletes
-the workspace-count functions, their call sites and frontend count guards. It adds no
-quota switches or policy modules. Authentication and permission checks remain in place.
+- PR: `windmill-linux-amd64-<sha>` artifact, retained for seven days, no registry push.
+- Main before the first release upgrade: `sha-<commit>`.
+- Main after an upgrade: `1.856.0-yeap.<main-commit-prefix>`.
 
-The patch was exported from the fork's upstream base
-`5f68eb9f4479bf209a34a34c857dd1d7e8de0eb9`. Tests verify that applying it to that base
-reproduces the fork's three changed production files, and that it applies to the
-published upstream release `v1.855.1`. CI-only changes and Rust/TS test changes are not
-part of the production patch.
+The shared builder supports native amd64/arm64 runners. PRs currently build amd64;
+main publishes both architectures. A version manifest is published only after all
+architecture builds and smoke checks pass. An interrupted publication may leave an
+architecture tag without the final version manifest. No mutable latest tag is created.
 
-To update the series, start a clean worktree at the intended upstream base, make only
-our production changes, and export `git diff --binary` to the patch directory. Update
-the patch tests' base and supported release when rebasing. Do not export the entire
-fork diff including workflows, tests and unrelated upstream changes.
+Build metadata records the upstream base SHA/tag, fork SHA, selected features and
+SHA256 of the production diff. That diff is generated during CI from main, excludes
+fork build tooling and version-specific tests, and is saved only as a build artifact.
+It is not an input maintained separately from main. Prefer the recorded manifest
+digest when updating Flux. Publishing does not update the cluster automatically.
 
-Each patch first passes `git apply --check`, then `git apply`. A conflict stops source
-preparation and prevents image publication. There is no forced application, automatic
-conflict resolution, skipped patch or fallback to unmodified upstream source. Repair
-the patch and rerun the release workflow when upstream changes conflict with it.
+## Repository setup
 
-The current patch conflicts with `v1.804.0`; that older deployment still needs a
-separate backport before a same-version replacement. Do not use a 1.855.1 image as
-an image-only replacement for that deployment.
+Merge these workflows into the default main branch and enable Actions. Allow GitHub
+Actions to create pull requests in repository settings. The detector requires contents
+and pull-request write permissions, plus Actions write for explicit test dispatch.
+GHCR publication uses `packages: write`; organization/package access policy can still
+prevent it. Make the package public or configure Kubernetes pull credentials.
 
-## Checks and publication
+If an upstream upgrade modifies workflow files, GitHub may reject its branch push with
+the default token. Configure `UPSTREAM_RELEASE_TOKEN` for git pushes, using a token
+authorized for this repository with Contents and Workflows write access. Classic PATs
+require the appropriate repo/public_repo and workflow scopes. PR creation and test
+dispatch still use GITHUB_TOKEN, so tests are triggered once through explicit dispatch.
 
-PR/main checks retain the existing public backend integration tests and focused
-frontend regression suites. New Python tests exercise actual patch application,
-conflict handling, feature selection and release-tag validation.
-
-Every architecture image is loaded locally and started against a disposable
-PostgreSQL 16 database. Smoke checks verify:
-
-- embedded frontend and password login;
-- unauthenticated workspace creation is rejected;
-- creating four workspaces, archiving two and restoring one above the former cap.
-
-Release builds compile the patched upstream source and run these image checks; they
-do not run the latest fork main's version-specific Rust/TS test suites against older
-upstream source. Existing PR/main tests validate changes to the fork itself.
-
-Only after an architecture passes does it push its architecture tag. The shared version
-manifest is published only after every architecture passes. A failed build may leave
-an architecture tag, but cannot create the completed version's manifest or Release record.
-
-Image names use the lowercase fork repository, currently
-`ghcr.io/yeap-capital/windmill`:
-
-- PR: an artifact `windmill-linux-amd64-<sha>`, retained for seven days, no registry push.
-- Main: `sha-<commit>`, currently amd64.
-- Upstream release: `1.855.1-yeap.<build-revision>`, amd64 and arm64.
-
-No mutable `latest` tag is published. Prefer the recorded manifest digest for Flux.
-Native amd64/arm64 GitHub runners avoid emulating the Rust compiler.
-
-After release image publication, a fork GitHub Release such as
-`fork-v1.855.1-p<build-revision>` records the image digest, source SHA, fork SHA, selected
-features and applied patch. The tag points to the fork workflow/recipe commit; the
-metadata identifies the actual upstream source commit. It is not a commit of a merged
-upstream source tree. The build revision hashes the patch series and image-building
-scripts/workflow, so recipe or patch updates allow rebuilding the same upstream version.
-
-The scheduled check selects GitHub's latest stable upstream release. It skips a completed
-release with the same build revision, retries failed builds on subsequent checks, and
-does not backfill every historical or intermediate release. Dispatch a specific tag
-manually when needed. Publishing the completion record fails if GitHub Release write
-access is denied, even if the image was already pushed; rerun after fixing access.
-
-## Upstream merge policy
-
-Prefer deleting unwanted restrictions over adding policy layers. Keep edits to upstream
-source small. Reuse public upstream build code, and keep upstream workflow/Dockerfile
-changes out of the fork diff. Original workflows retain their original triggers and
-infrastructure dependencies. Disable them through the Actions UI if this fork should
-run only these public workflows; this does not edit upstream YAML.
+Keep source changes small and delete unwanted restrictions directly. Reuse upstream
+build code. Original workflows retain their original infrastructure requirements;
+disable them through the Actions UI if the fork should run only these public workflows.
+The existing 1.804.0 deployment still requires a separate same-version backport before
+an image-only replacement; the automated upgrade process targets newer releases.
