@@ -1,0 +1,34 @@
+name: Upstream update PR
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      upstream_tag:
+        description: "Official release tag; leave empty for the latest stable release"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upstream-pr
+  cancel-in-progress: false
+
+jobs:
+  upgrade:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    env:
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ secrets.UPSTREAM_PR_TOKEN }}
+      REQUESTED_TAG: ${{ inputs.upstream_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Import official release and open upgrade PR
+        run: bash .github/automation/upstream-pr.sh

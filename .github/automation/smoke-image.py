@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check authentication, embedded frontend and workspace limits on a disposable server."""
+"""Check authentication, frontend and workspace limits after a manual image build."""
 
 import json
 import time

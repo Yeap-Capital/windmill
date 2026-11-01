@@ -1,7 +1,6 @@
-name: Public fork CI
+name: CI
 
 on:
-  workflow_dispatch:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
@@ -15,11 +14,10 @@ on:
       - "openflow.openapi.yaml"
       - "typescript-client/docs/**"
       - "python-client/docs/**"
-      - ".github/workflows/fork-ci.yml"
-      - ".github/workflows/fork-image.yml"
-      - ".github/workflows/fork-release.yml"
-      - ".github/scripts/**"
-      - "docs/fork-ci.md"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/build-image.yml"
+      - ".github/workflows/upstream-pr.yml"
+      - ".github/automation/**"
   push:
     branches: [main]
     paths:
@@ -33,17 +31,16 @@ on:
       - "openflow.openapi.yaml"
       - "typescript-client/docs/**"
       - "python-client/docs/**"
-      - ".github/workflows/fork-ci.yml"
-      - ".github/workflows/fork-image.yml"
-      - ".github/workflows/fork-release.yml"
-      - ".github/scripts/**"
-      - "docs/fork-ci.md"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/build-image.yml"
+      - ".github/workflows/upstream-pr.yml"
+      - ".github/automation/**"
 
 permissions:
   contents: read
 
 concurrency:
-  group: fork-ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -122,10 +119,3 @@ jobs:
       - name: Workspace API integration tests
         run: cargo test --locked --no-default-features --features quickjs --test workspace_count_limits --test session_workspace_status -- --nocapture --test-threads=1
 
-  docker:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [frontend, backend]
-    permissions:
-      contents: read
-      packages: write
-    uses: ./.github/workflows/fork-image.yml

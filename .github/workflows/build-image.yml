@@ -1,14 +1,14 @@
-name: Publish public fork image
+name: Build image
 
 on:
-  workflow_call:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   build:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main'
     strategy:
       fail-fast: false
       matrix:
@@ -69,7 +69,7 @@ jobs:
             -p 127.0.0.1:8000:8000 \
             -e DATABASE_URL=postgres://postgres:smoke-test@fork-postgres:5432/windmill \
             -e MODE=server -e CREATE_WORKSPACE_REQUIRE_SUPERADMIN=true "$IMAGE"
-          python .github/scripts/smoke_image.py
+          python .github/automation/smoke-image.py
       - name: Server logs
         if: failure()
         run: docker logs fork-server || true
