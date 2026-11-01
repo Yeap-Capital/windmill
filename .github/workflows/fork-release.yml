@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       upstream_tag:
-        description: "Stable upstream release, e.g. v1.856.0; empty selects latest"
+        description: "Official release tag; leave empty for the latest stable release"
         type: string
         default: ""
 
@@ -25,31 +25,59 @@ jobs:
       contents: write
       pull-requests: write
       actions: write
+    env:
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ secrets.UPSTREAM_RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Configure GitHub git authentication
+      - run: gh auth setup-git
+      - name: Import the release branch and merge main
+        id: release
+        env:
+          REQUESTED_TAG: ${{ inputs.upstream_tag }}
+        run: |
+          tag=${REQUESTED_TAG:-$(gh api repos/windmill-labs/windmill/releases/latest --jq .tag_name)}
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ $(gh api "repos/windmill-labs/windmill/releases/tags/$tag" --jq '.draft or .prerelease') == false ]]
+          branch="upstream/$tag"
+          state=$(gh pr list --head "$branch" --base main --state all --json state --jq '.[0].state // empty')
+          if [[ -n "$state" ]]; then
+            if [[ "$state" == OPEN ]]; then echo "branch=$branch" >> "$GITHUB_OUTPUT"; fi
+            exit 0
+          fi
+          git fetch --no-tags https://github.com/windmill-labs/windmill.git "refs/tags/$tag:refs/tags/$tag"
+          if git merge-base --is-ancestor "refs/tags/$tag" "$GITHUB_SHA"; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if [[ -n $(git ls-remote --heads origin "refs/heads/$branch") ]]; then
+            git fetch origin "refs/heads/$branch"
+            git switch -c "$branch" FETCH_HEAD
+          else
+            git switch -c "$branch" "refs/tags/$tag"
+          fi
+          git merge --no-edit "$GITHUB_SHA"
+          git push origin "$branch"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "create=true" >> "$GITHUB_OUTPUT"
+      - name: Open upgrade PR into main
+        if: steps.release.outputs.create == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh auth setup-git
-      - name: Rebase main changes onto the release and open an upgrade PR
-        id: upgrade
+          TAG: ${{ steps.release.outputs.tag }}
+          BRANCH: ${{ steps.release.outputs.branch }}
+        run: |
+          printf 'Import official Windmill %s and merge our main changes into that release.\n\nPR checks run frontend and backend tests. Docker images are built and published only after merge to main.\n' "$TAG" > "$RUNNER_TEMP/upgrade-pr.md"
+          gh pr create --base main --head "$BRANCH" --title "chore: update Windmill to $TAG" --body-file "$RUNNER_TEMP/upgrade-pr.md"
+      - name: Start tests for the bot-created PR if needed
+        if: steps.release.outputs.branch != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          UPSTREAM_RELEASE_TOKEN: ${{ secrets.UPSTREAM_RELEASE_TOKEN }}
-          UPSTREAM_TAG: ${{ inputs.upstream_tag }}
-        run: python .github/scripts/fork_build.py upgrade --tag "$UPSTREAM_TAG" --source "$RUNNER_TEMP/upgrade"
-      - name: Run tests explicitly for the bot-created PR
-        if: steps.upgrade.outputs.test_branch != ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          BRANCH: ${{ steps.upgrade.outputs.test_branch }}
-        run: gh workflow run fork-ci.yml --ref "$BRANCH"
-      - name: Report upgrade PR
-        env:
-          PR_URL: ${{ steps.upgrade.outputs.pr_url }}
-          REASON: ${{ steps.upgrade.outputs.reason }}
-        run: echo "${PR_URL:-$REASON}" >> "$GITHUB_STEP_SUMMARY"
+          BRANCH: ${{ steps.release.outputs.branch }}
+        run: |
+          if [[ $(gh run list --workflow fork-ci.yml --branch "$BRANCH" --json databaseId --jq length) == 0 ]]; then
+            gh workflow run fork-ci.yml --ref "$BRANCH"
+          fi

@@ -19,7 +19,6 @@ on:
       - ".github/workflows/fork-image.yml"
       - ".github/workflows/fork-release.yml"
       - ".github/scripts/**"
-      - ".github/fork-upstream-base.json"
       - "docs/fork-ci.md"
   push:
     branches: [main]
@@ -38,7 +37,6 @@ on:
       - ".github/workflows/fork-image.yml"
       - ".github/workflows/fork-release.yml"
       - ".github/scripts/**"
-      - ".github/fork-upstream-base.json"
       - "docs/fork-ci.md"
 
 permissions:
@@ -49,18 +47,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  recipe:
-    name: Public feature and release-patch checks
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Fetch recorded upstream base
-        run: python .github/scripts/fork_build.py fetch-base
-      - run: python -m unittest discover -s .github/scripts -p 'test_*.py' -v
-
   frontend:
     name: Frontend checks and Workspace tests
     runs-on: ubuntu-24.04
@@ -137,11 +123,9 @@ jobs:
         run: cargo test --locked --no-default-features --features quickjs --test workspace_count_limits --test session_workspace_status -- --nocapture --test-threads=1
 
   docker:
-    needs: [frontend, backend, recipe]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [frontend, backend]
     permissions:
       contents: read
       packages: write
     uses: ./.github/workflows/fork-image.yml
-    with:
-      publish: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
-      architectures: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && '["amd64","arm64"]' || '["amd64"]' }}
