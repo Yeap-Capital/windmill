@@ -1,0 +1,85 @@
+name: Patch upstream release and publish
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      upstream_tag:
+        description: "Stable upstream release, e.g. v1.855.1; empty selects latest"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-upstream-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    outputs:
+      upstream_tag: ${{ steps.release.outputs.upstream_tag }}
+      release_tag: ${{ steps.release.outputs.release_tag }}
+      skip: ${{ steps.release.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Find upstream release and skip completed builds
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPSTREAM_TAG: ${{ inputs.upstream_tag }}
+        run: python .github/scripts/fork_build.py release --tag "$UPSTREAM_TAG"
+
+  image:
+    needs: release
+    if: needs.release.outputs.skip != 'true'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/fork-image.yml
+    with:
+      upstream_tag: ${{ needs.release.outputs.upstream_tag }}
+      publish: true
+      architectures: '["amd64","arm64"]'
+
+  record:
+    needs: [release, image]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: fork-build-metadata
+          path: metadata
+      - name: Record image digest and publish the patch bundle
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          FORK_SHA: ${{ github.sha }}
+          RELEASE_TAG: ${{ needs.release.outputs.release_tag }}
+          UPSTREAM_TAG: ${{ needs.release.outputs.upstream_tag }}
+          IMAGE: ${{ needs.image.outputs.image }}:${{ needs.image.outputs.tag }}
+          DIGEST: ${{ needs.image.outputs.digest }}
+        run: |
+          jq --arg image "$IMAGE" --arg digest "$DIGEST" \
+            '. + {published_image: $image, digest: $digest}' \
+            metadata/metadata.json > metadata/build.json
+          {
+            echo "Upstream release: $UPSTREAM_TAG"
+            echo
+            echo "Image: $IMAGE@$DIGEST"
+            echo
+            echo "The attached patch was applied to upstream source before building."
+            echo "The release tag identifies the fork build recipe, not an upstream source commit."
+            echo "Public source only; private CE implementations are unavailable."
+            echo "Publishing this image does not deploy it to Kubernetes."
+          } > metadata/notes.md
+          gh release create "$RELEASE_TAG" metadata/fork.patch metadata/build.json \
+            --target "$FORK_SHA" --title "Windmill $UPSTREAM_TAG with Yeap patches" \
+            --notes-file metadata/notes.md --latest=false

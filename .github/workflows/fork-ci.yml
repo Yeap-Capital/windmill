@@ -16,6 +16,10 @@ on:
       - "typescript-client/docs/**"
       - "python-client/docs/**"
       - ".github/workflows/fork-ci.yml"
+      - ".github/workflows/fork-image.yml"
+      - ".github/workflows/fork-release.yml"
+      - ".github/scripts/**"
+      - "fork/patches/**"
       - "docs/fork-ci.md"
   push:
     branches: [main]
@@ -31,6 +35,10 @@ on:
       - "typescript-client/docs/**"
       - "python-client/docs/**"
       - ".github/workflows/fork-ci.yml"
+      - ".github/workflows/fork-image.yml"
+      - ".github/workflows/fork-release.yml"
+      - ".github/scripts/**"
+      - "fork/patches/**"
       - "docs/fork-ci.md"
 
 permissions:
@@ -41,6 +49,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  recipe:
+    name: Public feature and release-patch checks
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Fetch supported upstream release fixture
+        run: git fetch --no-tags https://github.com/windmill-labs/windmill.git refs/tags/v1.855.1:refs/tags/v1.855.1
+      - run: python -m unittest discover -s .github/scripts -p 'test_*.py' -v
+
   frontend:
     name: Frontend checks and Workspace tests
     runs-on: ubuntu-24.04
@@ -117,43 +137,10 @@ jobs:
         run: cargo test --locked --no-default-features --features quickjs --test workspace_count_limits --test session_workspace_status -- --nocapture --test-threads=1
 
   docker:
-    name: Public Docker image
-    needs: [frontend, backend]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 180
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Free runner disk space
-        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
-      - uses: docker/setup-buildx-action@v3
-      - name: Build upstream Dockerfile from public source
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile
-          platforms: linux/amd64
-          push: false
-          tags: windmill-fork:${{ github.sha }}
-          build-args: |
-            features=oss_core,python
-            WM_BUILD_VERSION=${{ github.sha }}
-          cache-from: type=gha,scope=public-amd64
-          cache-to: type=gha,mode=max,scope=public-amd64
-          outputs: type=docker,dest=${{ runner.temp }}/windmill-image.tar
-      - name: Check image executable
-        env:
-          IMAGE_TAG: windmill-fork:${{ github.sha }}
-        run: |
-          docker load --input "$RUNNER_TEMP/windmill-image.tar"
-          docker run --rm "$IMAGE_TAG" windmill --version
-      - name: Save image archive
-        uses: actions/upload-artifact@v4
-        with:
-          name: windmill-linux-amd64-${{ github.sha }}
-          path: ${{ runner.temp }}/windmill-image.tar
-          compression-level: 0
-          retention-days: 7
-          if-no-files-found: error
+    needs: [frontend, backend, recipe]
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/fork-image.yml
+    with:
+      publish: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
