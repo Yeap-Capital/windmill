@@ -11,6 +11,7 @@ on:
 
 jobs:
   check_oss:
+    if: github.repository == 'windmill-labs/windmill'
     runs-on: ubicloud-standard-8
     steps:
       - uses: actions/checkout@v4
@@ -30,6 +31,7 @@ jobs:
         run: SQLX_OFFLINE=true cargo check
 
   check_oss_full:
+    if: github.repository == 'windmill-labs/windmill'
     runs-on: ubicloud-standard-8
     steps:
       - uses: actions/checkout@v4
@@ -53,6 +55,7 @@ jobs:
           FRONTEND_BUILD_DIR=$(pwd)/fake_frontend_build SQLX_OFFLINE=true cargo check --features all_sqlx_features
 
   check_ee:
+    if: github.repository == 'windmill-labs/windmill'
     runs-on: ubicloud-standard-8
     steps:
       - uses: actions/checkout@v4
@@ -88,6 +91,7 @@ jobs:
         run: SQLX_OFFLINE=true cargo check
 
   check_ee_full:
+    if: github.repository == 'windmill-labs/windmill'
     runs-on: ubicloud-standard-8
     steps:
       - uses: actions/checkout@v4
