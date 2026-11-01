@@ -118,4 +118,3 @@ jobs:
         run: cargo check --locked --bin windmill --no-default-features --features quickjs
       - name: Workspace API integration tests
         run: cargo test --locked --no-default-features --features quickjs --test workspace_count_limits --test session_workspace_status -- --nocapture --test-threads=1
-
