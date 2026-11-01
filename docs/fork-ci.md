@@ -1,38 +1,46 @@
 # Public fork CI
 
-The existing upstream workflow files also support public forks. They use GitHub-hosted
-Ubuntu runners without `windmill-ee-private`, a license key, Ubicloud or Depot credentials.
+`.github/workflows/fork-ci.yml` is an independent entry point for this fork. Upstream
+workflow files and the root Dockerfile are kept intact to simplify upstream merges.
+The new workflow reuses upstream build commands and public toolchain actions on
+GitHub-hosted Ubuntu runners, without private source, a license key, Ubicloud or Depot.
 
-| Workflow | PR checks |
+## Upstream merge policy
+
+Put fork-specific behavior in new files and workflows. Reuse upstream commands and
+Dockerfiles without editing them. Where an existing check has no extension point, add
+the smallest hook to a separate policy module and preserve the upstream implementation.
+Keep this preference when adding further self-hosted capabilities.
+
+| Job | Checks |
 | --- | --- |
-| `frontend-check.yml` | Generate the API client, run `npm run check`, and run the session-state and workspace-creation regression tests. |
-| `backend-test.yml` | Migrate a PostgreSQL 16 service, compile the public backend and run `workspace_count_limits` and `session_workspace_status` API integration tests with `quickjs`. |
-| `docker-image.yml` | Build the root upstream `Dockerfile` for Linux amd64, check the image executable and upload a Docker image archive. |
+| Frontend | Generate the API client, run `npm run check`, and run session-state and workspace-creation regression tests. |
+| Backend | Migrate PostgreSQL 16, compile the public backend and run `workspace_count_limits` and `session_workspace_status` API tests with `quickjs`. |
+| Docker | After both checks pass, build the upstream Dockerfile for Linux amd64, check the executable and upload an image archive. |
 
-Draft PRs run these checks too. Changes to their relevant source paths or workflow files
-trigger the corresponding workflow. Each workflow also has a manual `workflow_dispatch`
-entry once its definition is on the default branch. Main-branch source changes run the
-checks and image build automatically.
-
-The upstream backend checks and private integration suite are restricted to
-`windmill-labs/windmill`; public forks use the public integration job instead. The Docker
-release jobs still belong to upstream. Fork builds do not push to a container registry,
-publish a release or deploy an instance.
+Draft PRs run too. Changes to the source paths or this workflow trigger it on PR updates
+and main-branch pushes. Manual dispatch is available once the workflow is on the default
+branch. It does not publish an image to a registry, release or deployment.
 
 ## Enable Actions
 
-New forks may have Actions disabled. Open the repository's **Actions** tab and enable
-workflows. If runs still do not start, check **Settings → Actions → General** for the
-repository or organization policy. After enabling Actions, push another commit to the
-PR branch, or use **Run workflow** after the workflow is present on the default branch.
+Open the repository's **Actions** tab and enable workflows if the fork has Actions
+disabled. Check **Settings → Actions → General** if organization policy prevents runs.
+After enabling Actions, push another commit to the PR branch, or use **Run workflow**
+after this definition reaches the default branch.
 
-Check the run's jobs and logs before treating an image as tested. The public backend
-job covers the workspace API regressions, not the private enterprise integration suite.
+The original upstream workflows still have their original triggers and infrastructure
+requirements. Disable those workflows individually in GitHub's Actions UI if this fork
+should run only **Public fork CI**. This changes repository settings without modifying
+upstream YAML files.
+
+Check each job's logs before treating an image as tested. These backend tests cover
+workspace API regressions, not the private enterprise integration suite.
 
 ## Use the image
 
-Download the `windmill-linux-amd64-<sha>` artifact from a successful Docker workflow run,
-unzip it, then load and tag the archive:
+Download `windmill-linux-amd64-<sha>` from a successful **Public fork CI** run, unzip it,
+then load and tag the archive:
 
 ```sh
 docker load --input windmill-image.tar
@@ -43,7 +51,15 @@ The tag printed by `docker load` uses the workflow's `github.sha`; for a PR this
 tested merge commit. Use `windmill-local:workspace-limits` in your deployment's image
 configuration. The archive expires after seven days.
 
-This image reuses the upstream Dockerfile with `features=oss_core,python`. This avoids
-the `private` dependency of `ce` and the `no_auth` flag included by `oss`. It includes
-the public core and Python, not every language or private enterprise implementation.
-The image executable check does not start the API or verify a production deployment.
+The image uses `features=oss_core,python`, avoiding `ce`'s private dependency and `oss`'s
+`no_auth` flag. It includes the public core and Python, not every language or private
+enterprise implementation. The executable check does not start or validate a deployment.
+
+## Fork workspace policy
+
+The backend's `fork_workspace_policy.rs` and frontend's `forkWorkspacePolicy.ts` set
+`WORKSPACE_COUNT_LIMITS_ENABLED` to `false`. Small hooks in the original quota checks
+apply this policy while keeping their implementation and call sites intact. Keep both
+policy constants consistent. Restoring both to `true` restores the upstream count checks.
+Existing upstream tests only receive the expectation changes required by this policy;
+the API lifecycle regression is a new test file.

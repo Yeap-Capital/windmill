@@ -6,32 +6,16 @@ on:
       - completed
 
   merge_group:
-  workflow_dispatch:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-      - "frontend/**"
-      - "chat-sdk/src/**"
-      - "backend/windmill-api/openapi.yaml"
-      - ".github/workflows/frontend-check.yml"
   push:
     paths:
       - "frontend/**"
       # The flow chat compiles the chat SDK's source in (svelte.config.js alias).
       - "chat-sdk/src/**"
-      - "backend/windmill-api/openapi.yaml"
       - ".github/workflows/frontend-check.yml"
-
-permissions:
-  contents: read
-
-concurrency:
-  group: frontend-check-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
 
 jobs:
   npm_check:
-    runs-on: ${{ github.repository == 'windmill-labs/windmill' && 'ubicloud-standard-8' || 'ubuntu-24.04' }}
+    runs-on: ubicloud-standard-8
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v7
@@ -46,9 +30,3 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=8192
         run: cd frontend && npm ci && npm run generate-backend-client && npm run
           check
-      - name: Workspace regression tests
-        if: github.repository != 'windmill-labs/windmill'
-        working-directory: frontend
-        env:
-          NODE_OPTIONS: --max-old-space-size=8192
-        run: npx vitest run --project server src/lib/components/sessions/sessionState.test.ts src/lib/workspaceCreation.test.ts

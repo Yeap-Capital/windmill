@@ -196,6 +196,9 @@ describe('commitSessionWorkspace — fork still being created', () => {
 	})
 })
 
+// Set the workspace list to a given number of non-'admins' workspaces so the
+// commit-path's CE workspace-cap check (mirror of backend _check_nb_of_workspaces)
+// can be exercised. Returns a restore fn.
 function withNonAdminWorkspaces(count: number): () => void {
 	const prev = get(usersWorkspaceStore)
 	const workspaces = Array.from({ length: count }, (_, i) => ws(`ws_${i}`))
@@ -203,35 +206,61 @@ function withNonAdminWorkspaces(count: number): () => void {
 	return () => usersWorkspaceStore.set(prev)
 }
 
-describe('commitSessionWorkspace — workspace count', () => {
-	it.each([1, 2, 5])(
-		'requests a fork without a license with %i existing workspaces',
-		async (count) => {
-			const id = `test-commit-fork-count-${count}`
-			const prevLicense = get(enterpriseLicense)
-			enterpriseLicense.set(undefined)
-			const restoreWs = withNonAdminWorkspaces(count)
-			vi.mocked(WorkspaceService.createWorkspaceFork).mockClear()
-			sessionState.sessions.push({
-				id,
-				name: 'fork-count',
-				createdAt: 0,
-				pending_fork: { parent_workspace_id: 'parent_ws', id: 'wm-fork-ok', name: 'ok' }
-			} as Session)
-			try {
-				const committed = await commitSessionWorkspace(id, 'parent_ws')
-				expect(committed).toBeUndefined()
-				expect(WorkspaceService.createWorkspaceFork).toHaveBeenCalledTimes(1)
-				const s = sessionState.sessions.find((x) => x.id === id)
-				expect(s?.pending_fork).toBeUndefined()
-			} finally {
-				const i = sessionState.sessions.findIndex((x) => x.id === id)
-				if (i >= 0) sessionState.sessions.splice(i, 1)
-				restoreWs()
-				enterpriseLicense.set(prevLicense)
-			}
+describe('commitSessionWorkspace — workspace count policy', () => {
+	it('requests a fork without a license at the upstream CE workspace cap', async () => {
+		const id = 'test-commit-fork-capped'
+		const prevLicense = get(enterpriseLicense)
+		enterpriseLicense.set(undefined)
+		const restoreWs = withNonAdminWorkspaces(2)
+		vi.mocked(WorkspaceService.createWorkspaceFork).mockClear()
+		sessionState.sessions.push({
+			id,
+			name: 'fork-capped',
+			createdAt: 0,
+			pending_fork: { parent_workspace_id: 'parent_ws', id: 'wm-fork-capped', name: 'capped' }
+		} as Session)
+		try {
+			await expect(commitSessionWorkspace(id, 'parent_ws')).resolves.toBeUndefined()
+			expect(WorkspaceService.createWorkspaceFork).toHaveBeenCalledTimes(1)
+			const s = sessionState.sessions.find((x) => x.id === id)
+			expect(s?.pending_fork).toBeUndefined()
+			expect(s?.workspace_id).toBeUndefined()
+		} finally {
+			const i = sessionState.sessions.findIndex((x) => x.id === id)
+			if (i >= 0) sessionState.sessions.splice(i, 1)
+			restoreWs()
+			enterpriseLicense.set(prevLicense)
 		}
-	)
+	})
+
+	it('lets an unlicensed user under the cap proceed to createWorkspaceFork', async () => {
+		const id = 'test-commit-fork-under-cap'
+		const prevLicense = get(enterpriseLicense)
+		enterpriseLicense.set(undefined)
+		// Below the cap (1 non-'admins' workspace) CE still allows a fork — the
+		// guard must NOT fire. createWorkspaceFork is mocked to reject, so the
+		// commit falls through to the failure contract (undefined, pending dropped).
+		const restoreWs = withNonAdminWorkspaces(1)
+		vi.mocked(WorkspaceService.createWorkspaceFork).mockClear()
+		sessionState.sessions.push({
+			id,
+			name: 'fork-under-cap',
+			createdAt: 0,
+			pending_fork: { parent_workspace_id: 'parent_ws', id: 'wm-fork-ok', name: 'ok' }
+		} as Session)
+		try {
+			const committed = await commitSessionWorkspace(id, 'parent_ws')
+			expect(committed).toBeUndefined()
+			expect(WorkspaceService.createWorkspaceFork).toHaveBeenCalled()
+			const s = sessionState.sessions.find((x) => x.id === id)
+			expect(s?.pending_fork).toBeUndefined()
+		} finally {
+			const i = sessionState.sessions.findIndex((x) => x.id === id)
+			if (i >= 0) sessionState.sessions.splice(i, 1)
+			restoreWs()
+			enterpriseLicense.set(prevLicense)
+		}
+	})
 })
 
 describe('commitSessionWorkspace — leaves workspaceStore untouched', () => {

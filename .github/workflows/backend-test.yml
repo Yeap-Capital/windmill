@@ -8,78 +8,18 @@ on:
     paths:
       - "backend/**"
       - ".github/workflows/backend-test.yml"
-      - ".github/workflows/backend-check.yml"
   pull_request:
     types: [opened, synchronize, reopened]
     paths:
       - "backend/**"
       - ".github/workflows/backend-test.yml"
-      - ".github/workflows/backend-check.yml"
-
-permissions:
-  contents: read
-
-concurrency:
-  group: backend-tests-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
 
 defaults:
   run:
     working-directory: ./backend
 
 jobs:
-  public_workspace_tests:
-    name: Public build and Workspace API tests
-    if: github.repository != 'windmill-labs/windmill'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    services:
-      postgres:
-        image: postgres:16
-        ports:
-          - 5432:5432
-        env:
-          POSTGRES_DB: windmill
-          POSTGRES_PASSWORD: changeme
-        options: >-
-          --health-cmd pg_isready --health-interval 10s --health-timeout 5s
-          --health-retries 5
-    env:
-      DATABASE_URL: postgres://postgres:changeme@localhost:5432/windmill
-      CARGO_BUILD_JOBS: "2"
-      CARGO_INCREMENTAL: "0"
-      CARGO_PROFILE_DEV_DEBUG: "0"
-      CARGO_PROFILE_TEST_DEBUG: "0"
-      RUST_MIN_STACK: "4194304"
-      DISABLE_EMBEDDING: "true"
-      CREATE_WORKSPACE_REQUIRE_SUPERADMIN: "true"
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Free runner disk space
-        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang mold libclang-dev cmake pkg-config libssl-dev libkrb5-dev libsasl2-dev libcurl4-openssl-dev postgresql-client
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: 1.97.0
-          cache-workspaces: backend
-          rustflags: "-C link-arg=-fuse-ld=mold"
-      - name: Install migration CLI
-        run: cargo install sqlx-cli --version 0.8.6 --locked --no-default-features --features rustls,postgres
-      - name: Prepare live compilation database
-        run: cargo sqlx migrate run --source migrations
-      - name: Check public backend
-        run: cargo check --locked --bin windmill --no-default-features --features quickjs
-      - name: Workspace API integration tests
-        run: cargo test --locked --no-default-features --features quickjs --test workspace_count_limits --test session_workspace_status -- --nocapture --test-threads=1
-
   cargo_test:
-    if: github.repository == 'windmill-labs/windmill'
     runs-on: ubicloud-standard-16
     services:
       postgres:
@@ -297,7 +237,7 @@ jobs:
           fi
           echo "Verified: Package requires authentication for @windmill-test/private-pkg"
       - name: Cache DuckDB FFI module build
-        uses: actions/cache@v4
+        uses: actions/cache@v3
         with:
           path: ./backend/windmill-duckdb-ffi-internal/target
           key: ${{ runner.os }}-duckdb-ffi-${{ hashFiles('./backend/windmill-duckdb-ffi-internal/src/**/*.rs', './backend/windmill-duckdb-ffi-internal/Cargo.toml', './backend/windmill-duckdb-ffi-internal/Cargo.lock') }}
