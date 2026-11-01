@@ -602,19 +602,11 @@ export async function deployItem(
         }
       }
     } else if (kind === "variable") {
-      // An external secret reference is copied as the reference, never as the value it resolves to.
-      let variable = await provider.getVariable({
+      const variable = await provider.getVariable({
         workspace: workspaceFrom,
         path,
-        decryptSecret: false,
+        decryptSecret: true,
       });
-      if (variable.is_secret && !variable.value?.startsWith("$external:")) {
-        variable = await provider.getVariable({
-          workspace: workspaceFrom,
-          path,
-          decryptSecret: true,
-        });
-      }
       if (alreadyExists) {
         await provider.updateVariable({
           workspace: workspaceTo,

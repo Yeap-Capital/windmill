@@ -22,11 +22,9 @@
 	import CriticalAlertChannels from './instanceSettings/CriticalAlertChannels.svelte'
 	import RetentionPeriodOverrides from './instanceSettings/RetentionPeriodOverrides.svelte'
 	import AgentWorkloadIdentityIssuers from './instanceSettings/AgentWorkloadIdentityIssuers.svelte'
-	import McpExternalIdp from './instanceSettings/McpExternalIdp.svelte'
 	import WorkspaceRolesSetting from './instanceSettings/WorkspaceRolesSetting.svelte'
 	import SmtpSettings from './instanceSettings/SmtpSettings.svelte'
 	import SecretBackendConfig from './instanceSettings/SecretBackendConfig.svelte'
-	import ExternalSecretsConfig from './instanceSettings/ExternalSecretsConfig.svelte'
 	import ExternalInstancePgSettings from './instanceSettings/ExternalInstancePgSettings.svelte'
 	import InstancePgSettings from './instanceSettings/InstancePgSettings.svelte'
 	import GhesAppSettings from './instanceSettings/GhesAppSettings.svelte'
@@ -638,8 +636,6 @@
 					</div>
 				{:else if setting.fieldType == 'agent_workload_identity_issuers'}
 					<AgentWorkloadIdentityIssuers {values} disabled={!$enterpriseLicense} />
-				{:else if setting.fieldType == 'mcp_external_idp'}
-					<McpExternalIdp {values} disabled={!$enterpriseLicense} />
 				{:else if setting.fieldType == 'critical_error_channels'}
 					<CriticalAlertChannels {values} {openSmtpSettings} {oauths} />
 				{:else if setting.fieldType == 'otel'}
@@ -880,8 +876,6 @@
 					<SmtpSettings {values} disabled={loading} />
 				{:else if setting.fieldType == 'secret_backend'}
 					<SecretBackendConfig {values} disabled={loading} />
-				{:else if setting.fieldType == 'external_secrets'}
-					<ExternalSecretsConfig {values} disabled={loading} />
 				{:else if setting.fieldType == 'external_instance_pg'}
 					<ExternalInstancePgSettings
 						{values}

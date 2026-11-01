@@ -90,7 +90,6 @@ fn trigger_authed() -> windmill_api_auth::ApiAuthed {
         read_only: false,
         job_id: None,
         credential_expiry: None,
-        mcp_client: None,
     }
 }
 

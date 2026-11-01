@@ -637,22 +637,16 @@ impl<B: McpBackend> ServerHandler for Runner<B> {
         // client for input, so the MRTR variants of `CallToolResponse` are never built.
         let result = match mode {
             McpMode::Single(workspace_id) => {
-                let result = self
-                    .call_tool_single(
-                        &auth,
-                        &workspace_id,
-                        &scope_config,
-                        read_only,
-                        request.name.clone(),
-                        args,
-                        &mcp_request,
-                    )
-                    .await;
-                let refusal = result.as_ref().err().map(|e| e.message.as_ref());
-                self.backend
-                    .after_tool_call(&auth, &workspace_id, &request.name, refusal)
-                    .await;
-                result
+                self.call_tool_single(
+                    &auth,
+                    &workspace_id,
+                    &scope_config,
+                    read_only,
+                    request.name.clone(),
+                    args,
+                    &mcp_request,
+                )
+                .await
             }
             McpMode::Multi(token) => {
                 self.call_tool_multi(
@@ -957,32 +951,12 @@ impl<B: McpBackend> Runner<B> {
             let named = self
                 .name_runnables(auth, workspace_id, scope_config, filter, filter)
                 .await?;
-            let Some((tool_type, path, _)) = named.into_iter().find(|(_, _, n)| n == name.as_ref())
-            else {
-                // Says which side refused: the token's selection, or the user's own rights.
-                let message = if scope_config.granular
-                    && self
-                        .name_runnables(
-                            auth,
-                            workspace_id,
-                            &crate::common::scope::McpScopeConfig {
-                                scripts: vec!["*".to_string()],
-                                flows: vec!["*".to_string()],
-                                ..Default::default()
-                            },
-                            filter,
-                            filter,
-                        )
-                        .await?
-                        .iter()
-                        .any(|(_, _, n)| n == name.as_ref())
-                {
-                    format!("Access denied: tool '{name}' is outside this token's selection")
-                } else {
-                    format!("No tool named '{name}' is available to this user")
-                };
-                return Err(ErrorData::internal_error(message, None));
-            };
+            let (tool_type, path, _) = named
+                .into_iter()
+                .find(|(_, _, n)| n == name.as_ref())
+                .ok_or_else(|| {
+                    ErrorData::internal_error(format!("No tool named '{}'", name), None)
+                })?;
             (tool_type, path, false)
         } else {
             // The `s-`/`f-`/`hs-` encoding: what hub scripts and items whose short

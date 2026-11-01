@@ -764,20 +764,7 @@
 		custom_instance_pg_databases: ['user_pwd'],
 		external_instance_pg: ['password'],
 		rsa_keys: ['private_key'],
-		github_enterprise_app: ['private_key'],
-		external_secrets: ['vault.token']
-	}
-
-	// A field may name one nested level, `parent.child`.
-	function getField(obj: any, field: string): any {
-		const [a, b] = field.split('.')
-		return b === undefined ? obj?.[a] : obj?.[a]?.[b]
-	}
-
-	function setField(obj: any, field: string, value: any) {
-		const [a, b] = field.split('.')
-		if (b === undefined) obj[a] = value
-		else if (obj[a] && typeof obj[a] === 'object') obj[a] = { ...obj[a], [b]: value }
+		github_enterprise_app: ['private_key']
 	}
 
 	/** Returns SENSITIVE_UNCHANGED if the value is non-empty and matches the initial */
@@ -805,10 +792,10 @@
 				const init = initialValues?.[key]
 				for (const field of nestedSensitiveFields[key]) {
 					const m = maskField(
-						field === 'serviceAccountKey' ? JSON.stringify(cp[field]) : getField(cp, field),
-						field === 'serviceAccountKey' ? JSON.stringify(init?.[field]) : getField(init, field)
+						field === 'serviceAccountKey' ? JSON.stringify(cp[field]) : cp[field],
+						field === 'serviceAccountKey' ? JSON.stringify(init?.[field]) : init?.[field]
 					)
-					if (m) setField(cp, field, m)
+					if (m) cp[field] = m
 				}
 				masked[key] = cp
 			} else if (sensitiveKeys.has(key) && value != null && value !== '') {
@@ -911,8 +898,8 @@
 				if (parsed[parentKey] && typeof parsed[parentKey] === 'object') {
 					const init = initialValues?.[parentKey]
 					for (const field of fields) {
-						if (getField(parsed[parentKey], field) === SENSITIVE_UNCHANGED) {
-							setField(parsed[parentKey], field, getField(init, field))
+						if (parsed[parentKey][field] === SENSITIVE_UNCHANGED) {
+							parsed[parentKey][field] = init?.[field]
 						}
 					}
 				}
@@ -1274,7 +1261,7 @@
 		<div class="flex-col flex gap-6 pb-6">
 			{#each settings[category] as setting}
 				<!-- slack connect is handled with the alert channels settings, smtp_connect is handled in InstanceSetting -->
-				{#if setting.fieldType != 'slack_connect' && !(quickSetup && setting.hideInQuickSetup) && !(quickSetup && category === 'Core' && setting.key === 'license_key') && !(setting.key === 'mcp_external_idp' && authSubTab !== 'sso')}
+				{#if setting.fieldType != 'slack_connect' && !(quickSetup && setting.hideInQuickSetup) && !(quickSetup && category === 'Core' && setting.key === 'license_key')}
 					<InstanceSetting
 						{openSmtpSettings}
 						on:closeDrawer={() => closeDrawer?.()}

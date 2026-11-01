@@ -3460,7 +3460,6 @@ mod debounce {
             viewer_data_access: None,
             runnable_settings_handle: rs_handle,
             job_token_scopes: None,
-            mcp_client: None,
         };
 
         let pulled = PulledJob {
@@ -3704,7 +3703,6 @@ mod debounce {
             viewer_data_access: None,
             runnable_settings_handle: rs_handle,
             job_token_scopes: None,
-            mcp_client: None,
         };
 
         let pulled = PulledJob {

@@ -77,8 +77,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, Postgres, Row, Transaction};
 use windmill_common::oauth2::InstanceEvent;
 use windmill_common::secret_backend::{
-    get_secret_backend, is_external_ref_value, is_external_stored_value,
-    is_vault_backend_configured,
+    get_secret_backend, is_external_stored_value, is_vault_backend_configured,
 };
 use windmill_common::utils::not_found_if_none;
 
@@ -6773,9 +6772,7 @@ async fn set_encryption_key(
         .await?;
 
         for variable in all_variables {
-            if !variable.is_secret
-                || windmill_common::secret_backend::resolves_externally(&variable.value)
-            {
+            if !variable.is_secret {
                 continue;
             }
             let decrypted_value =
@@ -14250,7 +14247,6 @@ async fn load_workspace_authed(
             read_only: base_authed.read_only,
             job_id: base_authed.job_id,
             credential_expiry: base_authed.credential_expiry,
-            mcp_client: base_authed.mcp_client.clone(),
         });
     };
 
@@ -14291,7 +14287,6 @@ async fn load_workspace_authed(
         read_only: base_authed.read_only,
         job_id: base_authed.job_id,
         credential_expiry: base_authed.credential_expiry,
-        mcp_client: base_authed.mcp_client.clone(),
     })
 }
 
@@ -14888,12 +14883,8 @@ async fn compare_two_variables(
         {
             // A secret's ciphertext is randomized on every write, so equal secrets are compared
             // by plaintext, each decrypted with its own workspace's key. An external backend
-            // reference is the same text on both sides but names a per-workspace entry. An
-            // `$external:` reference is compared as written: two references resolving to equal
-            // values still point at different secrets.
+            // reference is the same text on both sides but names a per-workspace entry.
             has_changes = !source.is_secret
-                || is_external_ref_value(&source.value)
-                || is_external_ref_value(&target.value)
                 || !matches!(
                     tokio::try_join!(
                         decrypt_secret_value(db, source_workspace_id, path, source.value.clone()),

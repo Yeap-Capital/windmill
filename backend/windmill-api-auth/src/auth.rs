@@ -347,7 +347,6 @@ impl AuthCache {
                     read_only: false,
                     job_id: None,
                     credential_expiry: Some(credential_expiry),
-                    mcp_client: None,
                 };
                 AUTH_CACHE.insert(
                     key,
@@ -393,7 +392,6 @@ impl AuthCache {
                             read_only: false,
                             job_id: None,
                             credential_expiry: None,
-                            mcp_client: claims.mcp_client,
                         };
                         // Fail closed: a `job_id` claim that does not parse must reject
                         // the token rather than resolve to `None`, which would clear the
@@ -525,7 +523,6 @@ impl AuthCache {
                                                 read_only,
                                                 job_id: None,
                                                 credential_expiry: None,
-                                                mcp_client: None,
                                             })
                                         } else {
                                             tracing::warn!(
@@ -580,7 +577,6 @@ impl AuthCache {
                                                 read_only,
                                                 job_id: None,
                                                 credential_expiry: None,
-                                                mcp_client: None,
                                             })
                                         } else {
                                             tracing::warn!(
@@ -680,7 +676,6 @@ impl AuthCache {
                                                 read_only,
                                                 job_id: None,
                                                 credential_expiry: None,
-                                                mcp_client: None,
                                             })
                                         }
                                         None if super_admin => {
@@ -706,7 +701,6 @@ impl AuthCache {
                                                     read_only,
                                                     job_id: None,
                                                     credential_expiry: None,
-                                                    mcp_client: None,
                                                 }),
                                                 Err(e) => {
                                                     tracing::error!(
@@ -745,7 +739,6 @@ impl AuthCache {
                                                 read_only,
                                                 job_id: None,
                                                 credential_expiry: None,
-                                                mcp_client: None,
                                             })
                                         }
                                         None => None,
@@ -766,7 +759,6 @@ impl AuthCache {
                                         read_only,
                                         job_id: None,
                                         credential_expiry: None,
-                                        mcp_client: None,
                                     })
                                 }
                             }
@@ -806,7 +798,6 @@ impl AuthCache {
                         read_only: false,
                         job_id: None,
                         credential_expiry: None,
-                        mcp_client: None,
                     };
                     Some(OptJobAuthed { authed, job_id: None })
                 } else {
@@ -1181,7 +1172,6 @@ fn no_auth_admin_authed() -> ApiAuthed {
         read_only: false,
         job_id: None,
         credential_expiry: None,
-        mcp_client: None,
     }
 }
 

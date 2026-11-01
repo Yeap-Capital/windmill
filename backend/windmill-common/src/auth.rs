@@ -324,10 +324,6 @@ pub struct JWTAuthClaims {
     pub job_id: Option<String>,
     pub scopes: Option<Vec<String>>,
     pub audit_span: Option<String>,
-    /// [`Authed::mcp_client`], so a request the caller's tools make on its behalf still
-    /// records the client on the runs it starts.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mcp_client: Option<String>,
 }
 
 impl JWTAuthClaims {
@@ -374,9 +370,6 @@ pub struct JobPerms {
     /// role, and the object storage advanced permission rules it is checked against.
     #[serde(default)]
     pub viewer_data_access: bool,
-    /// The OAuth client of an external issuer the root run was started through.
-    #[serde(default)]
-    pub mcp_client: Option<String>,
 }
 
 impl From<JobPerms> for Authed {
@@ -394,7 +387,6 @@ impl From<JobPerms> for Authed {
                 .collect(),
             scopes: None,
             token_prefix: None,
-            mcp_client: value.mcp_client,
         }
     }
 }
@@ -587,7 +579,6 @@ async fn fetch_authed_from_permissioned_as_inner(
                 folders,
                 scopes: None,
                 token_prefix: None,
-                mcp_client: None,
             })
         } else {
             let groups = vec![name.to_string()];
@@ -601,7 +592,6 @@ async fn fetch_authed_from_permissioned_as_inner(
                 folders,
                 scopes: None,
                 token_prefix: None,
-                mcp_client: None,
             })
         }
     } else {
@@ -623,7 +613,6 @@ async fn fetch_authed_from_permissioned_as_inner(
             folders: vec![],
             scopes: None,
             token_prefix: None,
-            mcp_client: None,
         })
     }
 }
@@ -681,7 +670,7 @@ pub async fn get_job_perms<'a, E: sqlx::PgExecutor<'a>>(
     sqlx::query_as!(
         JobPerms,
         "SELECT email, username, is_admin, is_operator, groups, folders, end_user_email,
-            job_token_scopes, viewer_data_access, mcp_client
+            job_token_scopes, viewer_data_access
         FROM job_perms WHERE job_id = $1 AND workspace_id = $2",
         job_id,
         w_id
@@ -835,7 +824,6 @@ pub async fn create_jwt_token(
         job_id: job_id.map(|id| id.to_string()),
         scopes,
         audit_span,
-        mcp_client: authed.mcp_client.clone(),
     };
 
     let token = jwt::encode_with_internal_secret(&payload)
@@ -974,7 +962,6 @@ mod tests {
             job_id: None,
             scopes: None,
             audit_span: None,
-            mcp_client: None,
         };
         // Signature is irrelevant — the gate decodes without verifying — so any key works.
         let token = jsonwebtoken::encode(

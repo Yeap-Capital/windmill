@@ -1489,7 +1489,6 @@ mod tests {
             read_only: false,
             job_id,
             credential_expiry: None,
-            mcp_client: None,
         }
     }
 
