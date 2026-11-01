@@ -1,7 +1,8 @@
 # Repository automation
 
-Custom source changes live in main. Upstream workflow files and Dockerfiles are kept
-unchanged. Scripts and these instructions are grouped in `.github/automation/`.
+Custom source changes live in main. Only the three repository workflows below are
+retained; inherited upstream workflows, archived workflows and local Actions are removed.
+Dockerfiles are unchanged. Scripts and these instructions are grouped in `.github/automation/`.
 GitHub requires workflow entry files directly inside `.github/workflows/`; it does not
 support workflow subdirectories.
 
@@ -16,8 +17,10 @@ support workflow subdirectories.
 `upstream-pr.sh` uses Git and GitHub CLI. It fetches an official release tag, creates
 `upstream/<tag>` in this repository, merges the main snapshot into it, pushes the branch
 and opens a PR into main. Existing PRs and releases already included in main are skipped.
-A merge conflict stops the job before push or PR creation. Main is never rewritten,
-and PRs are not auto-merged.
+On every upgrade, it restores these three workflow entry files from main and removes
+all other workflows and inherited local Actions, including newly added upstream files.
+This resolves workflow-only merge conflicts according to that rule. Other merge conflicts
+stop the job before push or PR creation. Main is never rewritten, and PRs are not auto-merged.
 
 Configure the Actions secret `UPSTREAM_PR_TOKEN` with a PAT or externally managed App
 token authorized for this repository. It needs Contents and Pull requests write access,
@@ -42,9 +45,8 @@ Public source does not reproduce private CE implementations. Keep the existing
 official Operator image; its public reconciler is unavailable. This builds the default
 image variant, not the optional full runtime variant.
 
-These workflows become available after merging into main and enabling Actions. Original
-upstream workflows retain their own triggers; if enabled separately, disable their Docker
-workflow in the Actions UI to prevent independent automatic image builds.
+These workflows become available after merging into main and enabling Actions.
+There are no retained upstream workflow entry files or automatic image-build workflows.
 
 Sources: [workflow location](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows#creating-a-reusable-workflow),
 [tokens and automatic triggers](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow).
