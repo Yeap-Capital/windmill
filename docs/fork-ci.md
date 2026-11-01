@@ -7,10 +7,10 @@ GitHub-hosted Ubuntu runners, without private source, a license key, Ubicloud or
 
 ## Upstream merge policy
 
-Put fork-specific behavior in new files and workflows. Reuse upstream commands and
-Dockerfiles without editing them. Where an existing check has no extension point, add
-the smallest hook to a separate policy module and preserve the upstream implementation.
-Keep this preference when adding further self-hosted capabilities.
+Prefer deleting unwanted restrictions over adding policy layers or switches. Reuse
+upstream code and actions when they can meet the fork's needs. Keep necessary edits to
+existing source small. Add a workflow only when the existing ones cannot run the required
+checks, and leave upstream workflow files and Dockerfiles intact for future merges.
 
 | Job | Checks |
 | --- | --- |
@@ -55,11 +55,15 @@ The image uses `features=oss_core,python`, avoiding `ce`'s private dependency an
 `no_auth` flag. It includes the public core and Python, not every language or private
 enterprise implementation. The executable check does not start or validate a deployment.
 
-## Fork workspace policy
+## Why a separate workflow
 
-The backend's `fork_workspace_policy.rs` and frontend's `forkWorkspacePolicy.ts` set
-`WORKSPACE_COUNT_LIMITS_ENABLED` to `false`. Small hooks in the original quota checks
-apply this policy while keeping their implementation and call sites intact. Keep both
-policy constants consistent. Restoring both to `true` restores the upstream count checks.
-Existing upstream tests only receive the expectation changes required by this policy;
-the API lifecycle regression is a new test file.
+Upstream checks use Ubicloud runners. The backend integration suite also checks out
+`windmill-ee-private` and enables `enterprise,private`; the workspace-count regression
+test is community-only and is skipped with those features. The upstream Docker workflow
+uses Depot and private source even for its CE build, and its PR trigger only matches
+changes to the root Dockerfile. These dependencies and test targets differ from this
+public fork, so reusing the workflow unchanged cannot replace this CI entry point.
+
+Workspace count limits are removed directly from the backend and frontend. There are
+no fork policy modules or new quota switches. Existing tests receive the required
+expectation changes; the API lifecycle regression is a new test file.

@@ -196,9 +196,6 @@ describe('commitSessionWorkspace — fork still being created', () => {
 	})
 })
 
-// Set the workspace list to a given number of non-'admins' workspaces so the
-// commit-path's CE workspace-cap check (mirror of backend _check_nb_of_workspaces)
-// can be exercised. Returns a restore fn.
 function withNonAdminWorkspaces(count: number): () => void {
 	const prev = get(usersWorkspaceStore)
 	const workspaces = Array.from({ length: count }, (_, i) => ws(`ws_${i}`))
@@ -206,7 +203,7 @@ function withNonAdminWorkspaces(count: number): () => void {
 	return () => usersWorkspaceStore.set(prev)
 }
 
-describe('commitSessionWorkspace — workspace count policy', () => {
+describe('commitSessionWorkspace — workspace count', () => {
 	it('requests a fork without a license at the upstream CE workspace cap', async () => {
 		const id = 'test-commit-fork-capped'
 		const prevLicense = get(enterpriseLicense)
@@ -237,9 +234,6 @@ describe('commitSessionWorkspace — workspace count policy', () => {
 		const id = 'test-commit-fork-under-cap'
 		const prevLicense = get(enterpriseLicense)
 		enterpriseLicense.set(undefined)
-		// Below the cap (1 non-'admins' workspace) CE still allows a fork — the
-		// guard must NOT fire. createWorkspaceFork is mocked to reject, so the
-		// commit falls through to the failure contract (undefined, pending dropped).
 		const restoreWs = withNonAdminWorkspaces(1)
 		vi.mocked(WorkspaceService.createWorkspaceFork).mockClear()
 		sessionState.sessions.push({
