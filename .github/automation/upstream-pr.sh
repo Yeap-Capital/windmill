@@ -26,24 +26,7 @@ if [[ -n $(git ls-remote --heads origin "refs/heads/$branch") ]]; then
 else
   git switch -c "$branch" "refs/tags/$tag"
 fi
-git merge --no-edit --no-ff --no-commit "$GITHUB_SHA" || [[ -f $(git rev-parse --git-path MERGE_HEAD) ]]
-# Retain our entry files and discard upstream workflows/actions, including new ones.
-git checkout "$GITHUB_SHA" -- .github/workflows/ci.yml .github/workflows/upstream-pr.yml .github/workflows/build-image.yml
-while IFS= read -r -d '' path; do
-  case "$path" in
-    .github/workflows/ci.yml|.github/workflows/upstream-pr.yml|.github/workflows/build-image.yml) ;;
-    *) git rm -f --ignore-unmatch -- "$path" ;;
-  esac
-done < <(git ls-files -z -- .github/workflows .github/actions)
-if [[ -n $(git diff --name-only --diff-filter=U) ]]; then
-  echo 'Unresolved merge conflicts remain outside workflow cleanup; resolve them before opening the PR.' >&2
-  exit 1
-fi
-if [[ -f $(git rev-parse --git-path MERGE_HEAD) ]]; then
-  git commit --no-edit
-elif ! git diff --cached --quiet; then
-  git commit -m 'Keep only repository automation'
-fi
+git merge --no-edit "$GITHUB_SHA"
 git push origin "$branch"
 
 printf 'Import official Windmill %s and merge our main changes into that release.\n\nPR checks run frontend and backend tests automatically. Docker images are built only by manually running the Build image workflow on main.\n' "$tag" > "$RUNNER_TEMP/upgrade-pr.md"

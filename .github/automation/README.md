@@ -1,8 +1,8 @@
 # Repository automation
 
-Custom source changes live in main. Only the three repository workflows below are
-retained; inherited upstream workflows, archived workflows and local Actions are removed.
-Dockerfiles are unchanged. Scripts and these instructions are grouped in `.github/automation/`.
+Custom source changes live in main. Upstream workflows, local Actions and Dockerfiles
+are retained unchanged. Unused workflows are disabled in GitHub repository settings,
+not removed from Git. Scripts and these instructions are grouped in `.github/automation/`.
 GitHub requires workflow entry files directly inside `.github/workflows/`; it does not
 support workflow subdirectories.
 
@@ -17,10 +17,8 @@ support workflow subdirectories.
 `upstream-pr.sh` uses Git and GitHub CLI. It fetches an official release tag, creates
 `upstream/<tag>` in this repository, merges the main snapshot into it, pushes the branch
 and opens a PR into main. Existing PRs and releases already included in main are skipped.
-On every upgrade, it restores these three workflow entry files from main and removes
-all other workflows and inherited local Actions, including newly added upstream files.
-This resolves workflow-only merge conflicts according to that rule. Other merge conflicts
-stop the job before push or PR creation. Main is never rewritten, and PRs are not auto-merged.
+A merge conflict stops the job before push or PR creation. The upgrade does not remove
+or rewrite upstream automation files. Main is never rewritten, and PRs are not auto-merged.
 
 Configure the Actions secret `UPSTREAM_PR_TOKEN` with a PAT or externally managed App
 token authorized for this repository. It needs Contents and Pull requests write access,
@@ -45,8 +43,23 @@ Public source does not reproduce private CE implementations. Keep the existing
 official Operator image; its public reconciler is unavailable. This builds the default
 image variant, not the optional full runtime variant.
 
-These workflows become available after merging into main and enabling Actions.
-There are no retained upstream workflow entry files or automatic image-build workflows.
+## Disable upstream workflows without changing their files
+
+Keep CI, Upstream update PR and Build image enabled. Disable unused workflows through
+**Actions > workflow > ... > Disable workflow**, or use GitHub CLI:
+
+```sh
+gh workflow disable backend-check.yml --repo Yeap-Capital/windmill
+gh workflow enable backend-check.yml --repo Yeap-Capital/windmill
+```
+
+The disabled state belongs to this repository, not the YAML file. Existing workflow
+files can therefore be synchronized from upstream unchanged. Newly registered upstream
+workflows need to be disabled separately; GitHub cannot disable an unregistered workflow
+by filename. Disabling does not cancel already queued/running jobs or delete run history.
+
+These repository workflows become available after merging into main and enabling Actions.
 
 Sources: [workflow location](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows#creating-a-reusable-workflow),
-[tokens and automatic triggers](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow).
+[tokens and automatic triggers](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow),
+[disabling workflows](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/disable-and-enable-workflows).
